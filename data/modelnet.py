@@ -16,10 +16,10 @@ def filter_files(files):
 def list_images(dir='modelnet40_images_new_12x', train=True, verbose=False):
     images = []
     classes = filter_files(os.listdir(dir))
-    for (i, cls) in enumerate(sorted(classes)):
+    for (i, cls_name) in enumerate(sorted(classes)):
         if verbose:
-            print('Processing', cls, '...')
-        clsdir = os.path.join(dir, cls)
+            print('Processing', cls_name, '...')
+        clsdir = os.path.join(dir, cls_name)
         filedir = os.path.join(clsdir, 'train' if train else 'test')
         files = sorted(filter_files(os.listdir(filedir)))
         images.extend([
@@ -125,3 +125,10 @@ class ModelNet40(Dataset):
             coarse_points = points[torch.randperm(points.size(0))[:n_coarse]]
             return img, coarse_points, points
         return img, points
+
+
+def ModelNet10(*args, **kwargs):
+    return ModelNet40(
+        *args, **kwargs,
+        img_root='modelnet10_images_new_12x',
+        data_file='modelnet10.hdf5')
