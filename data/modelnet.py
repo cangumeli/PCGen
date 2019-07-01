@@ -52,8 +52,32 @@ def angle_by_image(image_path):
     return view_idx * (pi / 6)
 
 
+def split_val(dset, val_file='val10.txt', **kwargs):
+    with open(val_file, 'r') as f:
+        val_images = set(line[:-1] for line in f)
+        # import pdb; pdb.set_trace()
+        val_image_files = [
+            img_file
+            for img_file in dset.image_files if img_file in val_images
+        ]
+        dset.image_files = [
+            img_file
+            for img_file in dset.image_files if img_file not in val_images
+        ]
+        val_dset = ModelNet40(
+            image_file_list=val_image_files,
+            img_root=dset.img_root,
+            off_root=dset.off_root,
+            validation=True,
+            opened_data_file=dset.data_file,
+            **kwargs,
+        )
+    return val_dset
+
+
 IMAGE_LINK = 'http://supermoe.cs.umass.edu/shape_recog/shaded_images.tar.gz'
 OFF_LINK = 'http://modelnet.cs.princeton.edu/ModelNet40.zip'
+VIEW_PER_PC = 12
 
 
 class ModelNet40(Dataset):
@@ -61,10 +85,11 @@ class ModelNet40(Dataset):
     def __init__(
             self,
             points_to_sample=1024,
-            coarse_sample_fraction=4,
+            coarse_sample_fraction=1,
             img_root='modelnet40_images_new_12x',
             off_root='ModelNet40',
             train=True,
+            validation=False,
             img_transform=Compose([
                 ToTensor(),
                 Normalize([.5, .5, .5], [.25, .25, .25])
@@ -73,11 +98,15 @@ class ModelNet40(Dataset):
             cache_imgs=False,
             data_file='modelnet40.hdf5',
             grid=False,
-            grid_size=(16, 64)
+            grid_size=(16, 64),
+            image_file_list=None,
+            opened_data_file=None
     ):
+        self.validation = validation
         self.img_root = img_root
         self.off_root = off_root
-        self.image_files = list_images(img_root, train=train)
+        self.image_files = list_images(img_root, train=train) \
+            if image_file_list is None else image_file_list
         self.points_to_sample = points_to_sample
         self.coarse_sample_fraction = coarse_sample_fraction
         self.img_transform = img_transform
@@ -85,7 +114,9 @@ class ModelNet40(Dataset):
         self.img_cache = {}
         self.cache_imgs = cache_imgs
         self.cache_offs = cache_offs
-        self.data_file = h5py.File(data_file, 'r')
+        self.data_file_name = data_file
+        self.data_file = h5py.File(data_file, 'r') \
+            if opened_data_file is None else opened_data_file
         self.grid = grid
         self.grid_size = grid_size
         if self.grid:
@@ -97,27 +128,49 @@ class ModelNet40(Dataset):
     def _read_off_data(self, off_file):
         if off_file in self.off_cache:
             return self.off_cache[off_file]
-        points = np.array(self.data_file[off_file + '/' + 'points'])
-        faces = np.array(self.data_file[off_file + '/' + 'faces'])
+        points = np.array(self.data_file[
+            'train' + '/' + off_file + '/' + 'points'])
+        faces = np.array(self.data_file[
+            'train' + '/' + off_file + '/' + 'faces'])
+        if self.cache_offs:
+            self.off_cache[off_file] = (points, faces)
         return torch.from_numpy(points), torch.from_numpy(faces).long()
+
+    def _read_sampled_off_data(self, off_file):
+        if off_file in self.off_cache:
+            return self.off_cache[off_file]
+        points = np.array(self.data_file[
+            'val' + '/' + off_file + '/' + 'points'
+        ])
+        if self.cache_offs:
+            self.off_cache[off_file] = points
+        return torch.from_numpy(points)
+
+    def _get_points(self, img_file):
+        off_file = off_by_image(img_file, self.off_root)
+        if self.validation:
+            points = self._read_sampled_off_data(off_file)
+        else:
+            points, faces = self._read_off_data(off_file)
+            points = sample(points, faces, self.points_to_sample)
+        '''if self.cache_offs and len(self.off_cache) == len(self)//VIEW_PER_PC:
+            print('Cache is fully populated, closing the data file...')
+            self.data_file.close()
+        '''
+        points = normalize(points)
+        points = rotatex(points, pi/3)
+        points = rotatez(points, angle_by_image(img_file))
+        return points
 
     def __getitem__(self, idx):
         img_file = self.image_files[idx]
         img = read_image(img_file) if img_file not in self.img_cache \
-            else self.img_cache(img_file)
+            else self.img_cache[img_file]
         if self.cache_imgs:
             self.img_cache[img_file] = img
         if self.img_transform is not None:
             img = self.img_transform(img)
-        off_file = off_by_image(img_file, self.off_root)
-        points, faces = self._read_off_data(off_file)
-        if self.cache_offs:
-            self.off_cache[off_file] = (points, faces)
-        points = sample(points, faces, self.points_to_sample)
-        points = normalize(points)
-        # points = rotatez(points, pi)
-        points = rotatex(points, pi/3)
-        points = rotatez(points, angle_by_image(img_file))
+        points = self._get_points(img_file)
         if self.grid:
             points = points_to_grid(points, self.grid_size)
         elif self.coarse_sample_fraction > 1:
@@ -132,3 +185,13 @@ def ModelNet10(*args, **kwargs):
         *args, **kwargs,
         img_root='modelnet10_images_new_12x',
         data_file='modelnet10.hdf5')
+
+
+def test():
+    tset = ModelNet10()
+    vset = split_val(tset)
+    # import pdb; pdb.set_trace()
+    assert (
+        len(set(tset.image_files).union(set(vset.image_files)))
+        == (len(vset) + len(tset)))
+    print('Test is passed')
