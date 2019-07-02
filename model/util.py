@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 from collections import namedtuple
+from math import pi
 
 
 MLPConfig = namedtuple(
@@ -57,9 +58,22 @@ def create_cnn(cfg, last_activation=True):
     return nn.Sequential(*layers)
 
 
-def normalize_points(points):
+def normalize_points(points, scale=None):
     centered = points - points.mean(1, True)
-    return centered / centered.abs().max(1, True)[0]
+    result = centered / centered.abs().max(1, True)[0]
+    if scale is not None:
+        result = result * scale
+    return result
+
+
+def points_from_sphere(grid_size, radius=0.5, device=None):
+    phi = torch.linspace(0, pi, grid_size, device=device).view(-1, 1)
+    theta = torch.linspace(0, 2 * pi, grid_size, device=device).view(1, -1)
+    # phi, theta = torch.meshgrid([phi, theta])
+    x = radius * torch.sin(phi) * torch.cos(theta)
+    y = radius * torch.sin(phi) * torch.sin(theta)
+    z = radius * torch.cos(phi) * torch.ones_like(theta, device=device)
+    return torch.stack([x.view(-1), y.view(-1), z.view(-1)], dim=-1)
 
 
 def normalize_point_grid(points):

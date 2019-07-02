@@ -23,6 +23,10 @@ def chamfer_distance(
     return (dists.min(-2)[0].mean(**mdims) + dists.min(-1)[0].mean(**mdims))
 
 
+def surface_loss(points):
+    return torch.abs(1 - points.abs().max(-1)[0]).mean()
+
+
 def std_loss(pred):
     dists = (pred**2).sum(-1).sqrt()
     return -dists.std(1).mean()
